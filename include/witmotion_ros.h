@@ -16,6 +16,8 @@
 #include <algorithm>
 #include <boost/range/algorithm.hpp>
 #include <ctime>
+#include <chrono>
+#include <functional>
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/parameter.hpp>
@@ -49,6 +51,9 @@ private:
     QSerialPort::BaudRate port_rate;
     uint32_t interval;
     uint32_t timeout_ms;
+    bool wt901blecl5_protocol;
+    int ble_register_poll_interval_ms;
+    std::vector<uint8_t> ble_register_reads;
     QThread reader_thread;
     QBaseSerialWitmotionSensorReader* reader;
     static bool suspended;
@@ -61,6 +66,7 @@ private:
    
     /* ROS FIELDS*/
     rclcpp::Node::SharedPtr node;
+    rclcpp::TimerBase::SharedPtr ble_register_timer;
     //std::shared_ptr<rclcpp::Node> node; 
     static bool Restart(std::shared_ptr<std_srvs::srv::Empty::Request> request, std::shared_ptr<std_srvs::srv::Empty::Response> response);
     std::string _restart_service_name;
@@ -168,6 +174,8 @@ public:
     void load_parameter(bool is_active, std::string param_name, double first_val, std::vector<double> &param_vector);
     void load_parameter_d(std::string param_name, double init_val, double &param_var);
     void load_parameter_f(std::string param_name, float init_val, float &param_var);
+    void configure_ble_register_polling();
+    void queue_ble_register_reads();
 public slots:
     void Packet(const witmotion_datapacket& packet);
     void Error(const QString& description);

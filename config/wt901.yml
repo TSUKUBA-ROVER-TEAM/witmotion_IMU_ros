@@ -2,13 +2,15 @@ witmotion:
   ros__parameters:
     port: ttyUSB0
     baud_rate: 115200 # baud
+    protocol: wt901blecl5.0 # standard, wt901blecl5.0
+    ble_register_poll_interval_ms: 100 # ms
     polling_interval: 50 # ms
     timeout_ms: 150 # ms
     restart_service_name: /restart_imu
     imu_publisher:
       topic_name: /imu
       frame_id: imu
-      use_native_orientation: true
+      use_native_orientation: false
       measurements:
         acceleration:
           enabled: true
@@ -23,7 +25,7 @@ witmotion:
       enabled: true
       topic_name: /temperature
       frame_id: base_link
-      from_message: magnetometer # acceleration, angular_vel, orientation, magnetometer
+      from_message: temperature # acceleration, angular_vel, orientation, magnetometer, temperature
       variance: 0.01829
       coefficient: 1.0 # Linear calibration parameters: coefficient
       addition: 0.0 # and addendum

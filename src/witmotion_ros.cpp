@@ -1,5 +1,7 @@
 #include "witmotion_ros.h"
 
+#include <cctype>
+
 bool ROSWitmotionSensorController::suspended = false;
 rclcpp::Service<std_srvs::srv::Empty>::SharedPtr restart_service;
 
@@ -86,7 +88,9 @@ rclcpp::Publisher<rosgraph_msgs::msg::Clock>::SharedPtr rtc_publisher;
 bool ROSWitmotionSensorController::rtc_presync = false;
 
 ROSWitmotionSensorController::ROSWitmotionSensorController()
-    : reader_thread(dynamic_cast<QObject *>(this))
+    : wt901blecl5_protocol(false),
+      ble_register_poll_interval_ms(100),
+      reader_thread(dynamic_cast<QObject *>(this))
 {
 
   // In case we need string to float conversions this prevents locale dependant conversions
@@ -95,6 +99,29 @@ ROSWitmotionSensorController::ROSWitmotionSensorController()
   /*Initializing ROS fields*/
   node = rclcpp::Node::make_shared("witmotion");
 
+  std::string protocol_name;
+  node->declare_parameter("protocol", "standard");
+  protocol_name = node->get_parameter("protocol")
+                      .get_parameter_value()
+                      .get<std::string>();
+  std::transform(protocol_name.begin(), protocol_name.end(),
+                 protocol_name.begin(), ::tolower);
+  wt901blecl5_protocol = (protocol_name == "wt901blecl5.0") ||
+                         (protocol_name == "wt901blecl5") ||
+                         (protocol_name == "ble5") ||
+                         (protocol_name == "ble");
+
+  node->declare_parameter("ble_register_poll_interval_ms", 100);
+  ble_register_poll_interval_ms =
+      node->get_parameter("ble_register_poll_interval_ms")
+          .get_parameter_value()
+          .get<int>();
+  if (ble_register_poll_interval_ms < 10) {
+    RCLCPP_WARN(node->get_logger(),
+                "ble_register_poll_interval_ms is too small (%d); using 10 ms",
+                ble_register_poll_interval_ms);
+    ble_register_poll_interval_ms = 10;
+  }
 
   /*Initializing ROS fields*/
   node->declare_parameter("restart_service_name", "restart");
@@ -184,6 +211,8 @@ ROSWitmotionSensorController::ROSWitmotionSensorController()
       temp_from = pidAngles;
     else if (temp_from_str == "MAGNETOMETER")
       temp_from = pidMagnetometer;
+    else if (temp_from_str == "TEMPERATURE" || temp_from_str == "BLE_TEMPERATURE")
+      temp_from = pidTemperature;
     else {
       RCLCPP_WARN_SKIPFIRST(rclcpp::get_logger("ROSWitmotionSensorController"),
                             "Cannot determine message type to take temperature "
@@ -394,7 +423,7 @@ ROSWitmotionSensorController::ROSWitmotionSensorController()
   timeout_ms = static_cast<uint32_t>(int_timeout_ms);
   reader->SetSensorTimeout(int_timeout_ms);
 
-  reader->ValidatePackets(true);
+  reader->ValidatePackets(!wt901blecl5_protocol);
   reader->moveToThread(&reader_thread);
   connect(&reader_thread, &QThread::finished, reader, &QObject::deleteLater);
   connect(this, &ROSWitmotionSensorController::RunReader, reader,
@@ -407,6 +436,10 @@ ROSWitmotionSensorController::ROSWitmotionSensorController()
           &ROSWitmotionSensorController::Error);    
 
   RCLCPP_INFO(node->get_logger(), "Starting node with lib version (%s).", witmotion::library_version().c_str());   
+  if (wt901blecl5_protocol) {
+    RCLCPP_INFO(node->get_logger(), "WT901BLECL5.0 protocol support enabled");
+    configure_ble_register_polling();
+  }
   reader_thread.start();
 
 }
@@ -537,6 +570,9 @@ void ROSWitmotionSensorController::temp_process(
     case pidMagnetometer:
       decode_magnetometer(packet, x, y, z, t);
       break;
+    case pidTemperature:
+      t = decode_temperature(packet.datastore.raw_cells);
+      break;
     default:
       return;
     }
@@ -589,11 +625,20 @@ void ROSWitmotionSensorController::orientation_process(
   if (orientation_enable) {
     static float x, y, z, w;
     static geometry_msgs::msg::Quaternion msg;
-    decode_orientation(packet, x, y, z, w);
-    msg.x = x;
-    msg.y = y;
-    msg.z = z;
-    msg.w = w;
+    if (static_cast<witmotion_packet_id>(packet.id_byte) == pidAngles) {
+      float t;
+      decode_angles(packet, x, y, z, t);
+      tf2::Quaternion tf_orientation;
+      tf_orientation.setRPY(x * DEG2RAD, y * DEG2RAD, z * DEG2RAD);
+      tf_orientation = tf_orientation.normalize();
+      msg = tf2::toMsg(tf_orientation);
+    } else {
+      decode_orientation(packet, x, y, z, w);
+      msg.x = x;
+      msg.y = y;
+      msg.z = z;
+      msg.w = w;
+    }
     orientation_publisher->publish(msg);
   }
 }
@@ -681,6 +726,44 @@ void ROSWitmotionSensorController::rtc_process(
   }
 }
 
+void ROSWitmotionSensorController::configure_ble_register_polling() {
+  ble_register_reads.clear();
+  if (magnetometer_enable) {
+    ble_register_reads.push_back(0x3A);
+  }
+  if (temp_enable && temp_from == pidTemperature) {
+    ble_register_reads.push_back(0x40);
+  }
+  if (imu_enable_orientation && imu_native_orientation) {
+    ble_register_reads.push_back(0x51);
+  }
+
+  std::sort(ble_register_reads.begin(), ble_register_reads.end());
+  ble_register_reads.erase(std::unique(ble_register_reads.begin(),
+                                       ble_register_reads.end()),
+                           ble_register_reads.end());
+
+  if (ble_register_reads.empty()) {
+    return;
+  }
+
+  ble_register_timer = node->create_wall_timer(
+      std::chrono::milliseconds(ble_register_poll_interval_ms),
+      std::bind(&ROSWitmotionSensorController::queue_ble_register_reads, this));
+}
+
+void ROSWitmotionSensorController::queue_ble_register_reads() {
+  for (uint8_t reg : ble_register_reads) {
+    witmotion::witmotion_config_packet config_packet;
+    config_packet.header_byte = witmotion::WITMOTION_CONFIG_HEADER;
+    config_packet.key_byte = witmotion::WITMOTION_CONFIG_KEY;
+    config_packet.address_byte = 0x27;
+    config_packet.setting.raw[0] = reg;
+    config_packet.setting.raw[1] = 0x00;
+    emit ConfigureSensor(config_packet);
+  }
+}
+
 ROSWitmotionSensorController &ROSWitmotionSensorController::Instance() {
   static ROSWitmotionSensorController instance;
   return instance;
@@ -761,6 +844,9 @@ void ROSWitmotionSensorController::Packet(const witmotion_datapacket &packet) {
   case pidAngularVelocity:
   case pidAngles:
     imu_process(packet);
+    if (static_cast<witmotion_packet_id>(packet.id_byte) == pidAngles) {
+      orientation_process(packet);
+    }
     temp_process(packet);
     break;
   case pidMagnetometer:
@@ -782,6 +868,9 @@ void ROSWitmotionSensorController::Packet(const witmotion_datapacket &packet) {
     break;
   case pidGPSCoordinates:
     gps_process(packet);
+    break;
+  case pidTemperature:
+    temp_process(packet);
     break;
   default:
     RCLCPP_INFO(rclcpp::get_logger("ROSWitmotionSensorController"),
