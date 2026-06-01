@@ -1,4 +1,4 @@
-find_package(Doxygen)
+find_package(Doxygen QUIET)
 if(DOXYGEN_FOUND)
 	set(DOXYGEN_IN ${CMAKE_CURRENT_SOURCE_DIR}/config/Doxyfile.in)
 	set(DOXYGEN_OUT ${CMAKE_CURRENT_BINARY_DIR}/Doxyfile)
@@ -12,6 +12,5 @@ if(DOXYGEN_FOUND)
 	#message(STATUS "Found Doxygen. Use makefile target 'doc-${PROJECT_NAME}' to build documentation for ${PROJECT_NAME}")
 	option(DOXYGEN_DOCS_BUILD ON)
 else(DOXYGEN_FOUND)
-	message(STATUS "Unable to found Doxygen. The documentation for ${PROJECT_NAME} will not be built")
+	message(STATUS "Doxygen was not found. The documentation for ${PROJECT_NAME} will not be built")
 endif(DOXYGEN_FOUND)
-

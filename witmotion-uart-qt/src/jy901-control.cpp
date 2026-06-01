@@ -21,6 +21,7 @@ using namespace witmotion::jy901;
 
 void handle_shutdown(int s)
 {
+    (void)s;
     std::cout << std::endl;
     QCoreApplication::exit(0);
 }

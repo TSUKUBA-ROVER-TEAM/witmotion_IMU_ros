@@ -252,6 +252,7 @@ signals:
 
 void handle_shutdown(int s)
 {
+    (void)s;
     std::cout << std::endl;
     QCoreApplication::exit(0);
 }

@@ -120,6 +120,7 @@ void QGeneralSensorController::Error(const QString &description)
 
 void handle_shutdown(int s)
 {
+    (void)s;
     std::cout << std::endl;
     QCoreApplication::exit(0);
 }
@@ -171,4 +172,3 @@ int main(int argc, char** args)
 
     return app.exec();
 }
-
