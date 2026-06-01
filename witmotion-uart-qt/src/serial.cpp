@@ -165,6 +165,12 @@ void QBaseSerialWitmotionSensorReader::ProcessBleRegisterPacket()
             cells[i] = read_le_i16(data + (i * 2));
         }
         EmitSyntheticPacket(pidMagnetometer, cells);
+        // Register 0x3A returns a fixed 8-register block; 0x40 is TEMP.
+        cells[0] = read_le_i16(data + 12);
+        cells[1] = 0;
+        cells[2] = 0;
+        cells[3] = 0;
+        EmitSyntheticPacket(pidTemperature, cells);
         break;
     case 0x0040:
         cells[0] = read_le_i16(data);
