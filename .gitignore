@@ -36,3 +36,6 @@ Documentation
 Debug
 Release
 
+build/
+install/
+log/
